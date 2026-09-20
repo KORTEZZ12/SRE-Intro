@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+
+# Least privilege, set explicitly: the default token permissions are wider
+# than this workflow needs. contents:write is here for the bonus step that
+# writes the new image tag back into k8s/.
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push all three service images
+        run: |
+          set -euo pipefail
+          # ghcr.io rejects a path with an uppercase letter, and the account
+          # is KORTEZZ12, so the owner is lowercased here rather than pasted
+          # by hand into three places.
+          owner=$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          for svc in gateway events payments; do
+            img="ghcr.io/${owner}/quickticket-${svc}:${{ github.sha }}"
+            echo "::group::build ${svc}"
+            docker build -t "${img}" "./app/${svc}"
+            docker push "${img}"
+            echo "::endgroup::"
+            echo "pushed ${img}"
+          done
+
+      - name: Show what was published
+        run: |
+          set -euo pipefail
+          owner=$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          for svc in gateway events payments; do
+            img="ghcr.io/${owner}/quickticket-${svc}:${{ github.sha }}"
+            docker image inspect "${img}" \
+              --format '{{.RepoTags}} {{.Id}} {{.Size}} bytes'
+          done
