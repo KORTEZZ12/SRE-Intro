@@ -5,6 +5,7 @@ metadata:
   labels:
     app: gateway
     version: "v2"
+    lab5-check: "s1789943858"
 spec:
   replicas: 1
   selector:
