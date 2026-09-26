@@ -2,9 +2,9 @@
 
 **Student:** Kirill Fadeev
 **Email:** ki.fadeev@innopolis.university
-**Environment:** WSL2 (kernel 6.18.33.2-microsoft-standard-WSL2, x86_64), Docker Engine 29.7.2, k3d v5.9.0, k3s v1.35.5+k3s1 with containerd 2.2.3-k3s1, kubectl v1.37.0, ArgoCD v3.5.3 (CLI v3.5.3+c9c369e), GitHub Actions on ubuntu-latest
+**Environment:** WSL2 (kernel 6.18.33.2-microsoft-standard-WSL2, x86_64), Docker Engine 29.7.2 (29.8.0 on the final run, after a desktop auto update), k3d v5.9.0, k3s v1.35.5+k3s1 with containerd 2.2.3-k3s1, kubectl v1.37.0, ArgoCD v3.5.3 (CLI v3.5.3+c9c369e), GitHub Actions on ubuntu-latest
 
-Every number below comes from a capture file taken during the run. Timings on the GitOps loop are client side stamps taken every few seconds against the Application custom resource, read with kubectl rather than through the ArgoCD CLI, so a broken CLI session cannot silently change what a measurement means. One figure is deliberately absent and is called out where it belongs: the machine suspended in the middle of the experiment that measures how long ArgoCD takes to call a stuck rollout Degraded, so the wall clock number from that run describes the laptop instead of the cluster.
+Every number below comes from a capture file taken during the run. Timings on the GitOps loop are client side stamps taken every few seconds against the Application custom resource, read with kubectl rather than through the ArgoCD CLI, so a broken CLI session cannot silently change what a measurement means.
 
 ---
 
@@ -30,7 +30,7 @@ permissions:
           done
 ```
 
-Two choices differ from the snippet in the lab text. The owner is lowercased in the workflow rather than pasted by hand, because ghcr.io rejects a path containing an uppercase letter and the account is `KORTEZZ12`. And `permissions:` is set explicitly at the top of the file instead of inheriting the default, which is wider than this job needs.
+Two choices differ from the snippet in the lab text. The owner is lowercased by the workflow, not pasted in by hand, because ghcr.io rejects a path containing an uppercase letter and the account is `KORTEZZ12`. And `permissions:` is set explicitly at the top of the file instead of inheriting the default, which is wider than this job needs.
 
 No `:latest` tag is pushed. Only the commit SHA is, so there is exactly one image per commit and a rollback has a tag to roll back to.
 
@@ -90,7 +90,7 @@ The five manifests from Lab 4 moved from locally imported images to registry one
 +        - name: ghcr-secret
 ```
 
-The lab's Common Pitfalls section states that ghcr.io packages are private by default and that a pull secret is therefore required. The listing above already says `visibility=public`, so the claim was worth testing rather than repeating. A package published by Actions from a public repository inherits that repository's visibility, and the fork is public.
+The lab's Common Pitfalls section states that ghcr.io packages are private by default and that a pull secret is therefore required. The listing above already says `visibility=public`, so the claim was worth testing rather than repeating. What the run measured is the visibility field and the registry's answer to an anonymous request; the reason the packages came out public, that the fork they were published from is public, is a reading of GitHub's inheritance rule and not something this lab measured.
 
 The registry was asked for each image with no credential at all, using an anonymous pull token:
 
@@ -116,37 +116,31 @@ Warning  FailedToRetrieveImagePullSecret  2m29s (x28 over 62m)  kubelet
 ```plaintext
 --- a secret whose password is not a token ---
 $ kubectl create secret docker-registry ghcr-secret --docker-server=ghcr.io \
-    --docker-username=kortezz12 --docker-password=not-a-real-token
+    --docker-username=kortezz12 --docker-password=<a string that is not a token>
 $ kubectl rollout restart deploy/gateway
   t+0.13s   gateway-59f9c58f7c-jssxm 1/1 Running   gateway-6b475c767d-slxqf 0/1 ContainerCreating
   t+5.30s   gateway-59f9c58f7c-jssxm 1/1 Running   gateway-6b475c767d-slxqf 0/1 ErrImagePull
   t+20.82s  gateway-59f9c58f7c-jssxm 1/1 Running   gateway-6b475c767d-slxqf 0/1 ImagePullBackOff
 ```
 
-`kubectl describe` on the failing pod names the refusal exactly:
+The kubelet's own reason for the new pod, next to the old one it left alone:
 
 ```plaintext
-Warning  Failed  kubelet  Failed to pull image "ghcr.io/kortezz12/quickticket-gateway:8782cb77...":
-    failed to authorize: failed to fetch oauth token: unexpected status from GET request to
-    https://ghcr.io/token?scope=repository%3Akortezz12%2Fquickticket-gateway%3Apull&service=ghcr.io:
-    403 Forbidden
+NAME                       READY   REASON
+gateway-59f9c58f7c-jssxm   true    <none>
+gateway-6b475c767d-slxqf   false   ImagePullBackOff
 ```
 
 ```plaintext
 --- secret deleted, nothing else changed ---
-  t+5.34s   gateway-5bdbf65bcd-rfc2q 0/1 Running
+  t+5.34s   gateway-59f9c58f7c-jssxm 1/1 Running   gateway-5bdbf65bcd-rfc2q 0/1 Running
   t+10.50s  gateway-5bdbf65bcd-rfc2q 1/1 Running
 in-cluster GET /health -> 200 {"status":"healthy","checks":{"events":"ok","payments":"ok","circuit_payments":"CLOSED"}}
 ```
 
-> A pull secret naming a credential the registry rejects is worse than no pull secret at all. With no secret the kubelet logs a warning and falls back to an anonymous pull, which succeeds because the package is public. With a bad secret it presents those credentials to the token endpoint, gets 403, and never reaches the anonymous path, so a public image becomes unpullable. The failure looks like a permissions problem with the registry and is actually a problem with the thing that was added to fix permissions.
+> A pull secret naming a credential the registry rejects is worse than no pull secret at all. With no secret the kubelet logs a warning and falls back to an anonymous pull, which succeeds because the package is public. With a bad secret it presents those credentials instead, the pull fails, and it never falls back to the anonymous path, so a public image becomes unpullable. The failure looks like a permissions problem with the registry and is actually a problem with the thing that was added to fix permissions.
 
-The Service stayed up throughout. During the failed pull the endpoints object carried the old pod as ready and the new one as not ready:
-
-```plaintext
-ready   : ['10.42.0.53']
-notReady: ['10.42.0.54']
-```
+The Service stayed up throughout: the old pod stayed ready while the new one sat in `ImagePullBackOff`, and the in-cluster health check answered 200 during the failure. The step that was supposed to print the endpoints object by name failed on its own JSON parsing, so that listing is not reported here; the readiness column above and the 200 are what the capture supports.
 
 ### 5.4 Installing ArgoCD
 
@@ -158,34 +152,36 @@ kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/st
 
 ```plaintext
 manifest: 34050 lines, 59 objects
-configmap/argocd-gpg-keys-cm created
-... 29 objects created ...
-networkpolicy.networking.k8s.io/argocd-server-network-policy created
+configmap/argocd-gpg-keys-cm configured
+... 29 more objects ...
+networkpolicy.networking.k8s.io/argocd-server-network-policy configured
 The CustomResourceDefinition "applicationsets.argoproj.io" is invalid:
     metadata.annotations: Too long: may not be more than 262144 bytes
 exit code of that apply: 1
 ```
 
-Every object applied except one, and the exit code is easy to miss in a terminal that has just scrolled thirty lines of `created`. Asking the cluster which CRDs exist gives the real answer:
+Every object applied except one, and the exit code is easy to miss in a terminal that has just scrolled thirty lines of output. That error reproduced on every run of this step. The documented cause is the client side apply path: it stores a full copy of the object in the `kubectl.kubernetes.io/last-applied-configuration` annotation, annotations are capped at 256 KiB, and this CRD's schema is larger than that.
+
+Because a non-zero exit code is not something the lab's steps check, a step was added that asks the cluster which CRDs exist instead of trusting the apply:
 
 ```plaintext
-  applications.argoproj.io     present
-  appprojects.argoproj.io      present
-  applicationsets.argoproj.io  MISSING
+  applications.argoproj.io present
+  appprojects.argoproj.io present
+  applicationsets.argoproj.io present
+applications.argoproj.io                       2026-09-23T20:58:10Z
+applicationsets.argoproj.io                    2026-09-23T20:58:13Z
+appprojects.argoproj.io                        2026-09-23T20:58:11Z
 ```
 
-Client side apply stores a full copy of the object in the `kubectl.kubernetes.io/last-applied-configuration` annotation, annotations are capped at 256 KiB, and this CRD's schema is larger than that. Server side apply keeps no such annotation:
+All three exist, with creation timestamps inside that same run, so the non-zero exit did not always mean the CRD was absent. On the first install it did. That run's capture shows what an unchecked exit code costs:
 
 ```plaintext
-$ kubectl apply --server-side --force-conflicts -n argocd -f <install.yaml>
-customresourcedefinition.apiextensions.k8s.io/applicationsets.argoproj.io serverside-applied
-...
-  applications.argoproj.io     present now
-  appprojects.argoproj.io      present now
-  applicationsets.argoproj.io  present now
+argocd-applicationset-controller-7f95b9cd7c-crdxg   0/1   CrashLoopBackOff   4 (84s ago)   5h23m
+argocd-applicationset-controller-7f95b9cd7c-crdxg: CrashLoopBackOff: back-off 2m40s restarting
+    failed container=argocd-applicationset-controller
 ```
 
-> The first time this went unnoticed, `argocd-applicationset-controller` spent five and a half hours in CrashLoopBackOff with `failed to get restmapping: no matches for kind "ApplicationSet"`, while `kubectl get pods -n argocd` showed six of seven pods Running and the install looked finished. The missing piece was one CRD out of three, and the command that failed to create it returned a non-zero code that no step in the lab checks. A partial install that reports success is harder to notice than one that stops, because everything a person would think to look at is green.
+> Five hours and twenty three minutes of restarts on one pod, while `kubectl get pods -n argocd` showed the other six Running and the install looked finished. The missing piece was one CRD out of three, and the command that failed to create it returned a code that no step in the lab reads. A partial install that reports success is harder to notice than one that stops, because everything a person would think to look at is green.
 
 After the fix the whole namespace came up, and the secret every other component mounts appeared once the redis pod's init container had its image:
 
@@ -193,7 +189,7 @@ After the fix the whole namespace came up, and the secret every other component 
 argocd-redis secret appeared after 0.20s of waiting
   t+0.15s  7/7 ready  notready: -
 ArgoCD ready 5.70s after apply
-argocd-server image: quay.io/argoproj/argocd:v3.5.3
+image: quay.io/argoproj/argocd:v3.5.3
 ```
 
 ### 5.5 The Application
@@ -206,6 +202,7 @@ argocd app create quickticket \
 ```
 
 ```plaintext
+$ argocd app get quickticket
 Name:               argocd/quickticket
 Project:            default
 Source:
@@ -250,7 +247,7 @@ A label was added to the gateway Deployment in Git and pushed. No `kubectl apply
 ```
 
 ```plaintext
-T_GIT_PUSH 01:27:23.501   commit 8c911c6156edae5e778dc6b0a60b8bd98cfbe207
+T_GIT_PUSH 01:37:38.875   commit 8c911c6156edae5e778dc6b0a60b8bd98cfbe207
   t+0.12s    OutOfSync Healthy 6ee34c82aa64
   ... 41 samples, unchanged ...
   t+206.51s  OutOfSync Healthy 6ee34c82aa64
@@ -259,11 +256,12 @@ ArgoCD reached revision 8c911c6156ed 211.66s after the push, unattended
 
 $ kubectl get deployment gateway -o jsonpath='{.metadata.labels.version}'
 v2
-NAME      READY   UP-TO-DATE   AVAILABLE   LABELS
-gateway   1/1     1            1           app=gateway,lab5-check=s1790282739,version=v2
+lab5-check label in the cluster: s1789943858   (pushed: s1789943858)
+NAME      READY   UP-TO-DATE   AVAILABLE   AGE   LABELS
+gateway   1/1     1            1           20m   app=gateway,lab5-check=s1789943858,version=v2
 ```
 
-211.66 seconds against a documented three minute poll interval. The extra half minute is where the push fell inside the current interval, not a delay in applying anything: once ArgoCD noticed, the sync itself took under five seconds.
+211.66 seconds against ArgoCD's documented three minute poll interval. Where the extra half minute went was not measured, and the most likely reading is that the push landed partway into an interval that was already running. What the samples do show is that the delay was in noticing: the revision changed between one five second sample and the next.
 
 ### 5.7 What happens when somebody runs kubectl edit
 
@@ -304,7 +302,7 @@ NAME       TYPE        CLUSTER-IP     PORT(S)    AGE
 payments   ClusterIP   10.43.248.97   8082/TCP   3s
 ```
 
-A second run of the same two experiments on a rebuilt cluster gave 3.44 seconds and 3.37 seconds, so the figures above are an upper bound rather than a constant: what is being measured is how soon the next reconciliation happens to land.
+A second run of the same two experiments on a rebuilt cluster gave 3.44 seconds and 3.37 seconds, so the figures above are an upper bound, not a constant: what is being measured is how soon the next reconciliation happens to land.
 
 **What happens if someone manually runs `kubectl edit` on a resource managed by ArgoCD?**
 
@@ -343,6 +341,7 @@ payments-5f4fbffdbc-g7x95   1/1     Running            0          32m
 
 NAME                 DESIRED   READY    IMAGE
 gateway-5fd64847b5   1         1        ghcr.io/kortezz12/quickticket-gateway:8782cb7761b0...
+gateway-769844dcfd   0         <none>   ghcr.io/kortezz12/quickticket-gateway:8782cb7761b0...
 gateway-87bf8b4df    1         <none>   ghcr.io/kortezz12/quickticket-gateway:does-not-exist
 ```
 
@@ -362,6 +361,7 @@ notReady addresses: ['10.42.0.27']
 ArgoCD reported `Degraded` once the Deployment gave up on the rollout:
 
 ```plaintext
+$ argocd app get quickticket
 Sync Status:        Synced to  (d3c2dc9)
 Health Status:      Degraded
 
@@ -371,7 +371,13 @@ Available    True   MinimumReplicasAvailable  Deployment has minimum availabilit
 Progressing  False  ProgressDeadlineExceeded  ReplicaSet "gateway-87bf8b4df" has timed out progressing.
 ```
 
-The time between the push and that transition is not reported here. The machine suspended during the measurement: the polling loop shows `t+617.70s Synced Progressing` and then jumps straight to `t+42793.68s`, so the recorded 42930 seconds is mostly sleep. What the capture does support is the mechanism and a lower bound: at 617 seconds the Application was still `Progressing`, the Deployment's `progressDeadlineSeconds` is 600, and the condition that flips ArgoCD to `Degraded` is `ProgressDeadlineExceeded` on that Deployment. Ten minutes of default deadline is a long time to wait for a verdict on a rollout that was visibly failing after eighteen seconds.
+ArgoCD does not decide this for itself. It reads the Deployment's own `Progressing` condition, and that condition only turns false once `progressDeadlineSeconds` elapses without the new ReplicaSet making progress. On the gateway Deployment that field is 600:
+
+```plaintext
+progressDeadlineSeconds on the gateway Deployment: 600
+```
+
+At ten minutes of default deadline, a rollout that was visibly failing eighteen seconds in still counts as in progress for the rest of that window. The pod was in `ImagePullBackOff` and the tag was never going to resolve, and every health field above the Deployment stayed green until the deadline ran out. Anything that watches `Application.status.health` for a verdict inherits that delay; watching the pod's container state does not.
 
 ### 5.9 Reverting
 
@@ -407,6 +413,7 @@ gateway-5fd64847b5-5gk98    1/1     Running   0          12h
 $ kubectl get deploy gateway -o jsonpath='{...image}'
 ghcr.io/kortezz12/quickticket-gateway:8782cb7761b00a750b49ea25256af85df2d2d9f3
 
+$ argocd app get quickticket
 Sync Status:        Synced to  (a417307)
 Health Status:      Healthy
 ```
@@ -415,7 +422,7 @@ Health Status:      Healthy
 
 189.84 seconds, of which 175.74 was ArgoCD waiting for its own poll interval to come round and 14.10 was the cluster doing the work. Nobody typed a kubectl command and nobody needed cluster credentials; the rollback was a commit.
 
-The number is dominated by a polling interval, which means it is a configuration choice rather than a property of the system. A webhook from GitHub would cut most of the 175 seconds, and `argocd app sync` cuts all of it. It is worth noticing what the 189 seconds did not include: no time locating the person who deployed, no time reconstructing what the previous state was, and no risk of the rollback itself being a fresh mistake, because the previous state is a commit that is known to have worked.
+The number is dominated by a polling interval, which means it is a configuration choice rather than a property of the system. A webhook from GitHub would cut most of the 175 seconds, and `argocd app sync` cuts all of it. The 189 seconds also cover the whole of the decision: the previous state was already a commit that had run, so reverting it needed no reconstruction of what to go back to.
 
 ---
 
@@ -516,7 +523,7 @@ deploy history, newest last:
 events: 5
 ```
 
-One consequence of this arrangement caught the measurement rather than the cluster. After the bonus step was installed, a push of commit `a2dfee5` was followed within a minute by CI's `6b947f5`, and the deploy history above shows ArgoCD going from `200b58e` straight to `6b947f5`. It never deployed `a2dfee5` as a revision, although the content of that commit reached the cluster inside the CI written one, which the round trip label confirmed:
+One consequence of this arrangement caught the measurement, not the cluster. After the bonus step was installed, a push of commit `a2dfee5` was followed within a minute by CI's `6b947f5`, and the deploy history above shows ArgoCD going from `200b58e` straight to `6b947f5`. It never deployed `a2dfee5` as a revision, although the content of that commit reached the cluster inside the CI written one, which the round trip label confirmed:
 
 ```plaintext
 lab5-check label in the cluster: s1790282739   (pushed: s1790282739)
@@ -534,8 +541,8 @@ lab5-check label in the cluster: s1790282739   (pushed: s1790282739)
 | Actions run green | run 35522424041, conclusion success, 119 s, 5 of 5 steps success |
 | Images in ghcr.io | 3 packages, `visibility=public`, digests verified by asking the registry by tag |
 | Pull secret necessary? | no: anonymous manifest GET returns 200 for all three |
-| Pull secret harmful? | yes if wrong: 403 from the token endpoint, ErrImagePull at 5.30 s, ImagePullBackOff at 20.82 s |
-| ArgoCD installed | v3.5.3, 7 pods ready 5.70 s after apply, one CRD needed `--server-side` |
+| Pull secret harmful? | yes if wrong: ErrImagePull at 5.30 s, ImagePullBackOff at 20.82 s, recovered 10.50 s after deleting it |
+| ArgoCD installed | v3.5.3, 7 pods ready 5.70 s after apply, CRD presence checked because the install exits 1 |
 | Application created | Synced and Healthy, 11 objects including the seed ConfigMap |
 | Git change synced to cluster | `version: v2` live 211.66 s after the push, unattended |
 | `kubectl edit` answer | OutOfSync in 10.34 s, uncorrected after 240 s; with self-heal reverted in 9.80 s |
