@@ -468,7 +468,7 @@ All commands run from the `app/` directory of the repository.
 
 ### B.2 Swap and test
 
-_Pending: the cross-test with a classmate has not happened yet. This section will be filled in from that session: who tested it, which failure was injected (`./lab6-bonus.sh inject <mode>`, the classmate is not told), time from handing over the runbook to recovery, what was unclear, and the runbook changes made in response (v2)._
+Not done. No classmate was available to run the test before the deadline, so the runbook has only been checked by its author (B.1). That is a weaker test than the one the task asks for: I knew the failure, so I could not find out whether the runbook alone leads someone to it. The bonus is therefore incomplete, and I am not claiming it.
 
 ---
 
@@ -483,6 +483,6 @@ _Pending: the cross-test with a classmate has not happened yet. This section wil
 | Resolution | error-rate rule cleared 7 s after the fix while the window still held the incident; resolved page 4 min 34 s later |
 | Runbook | cause found from step 2 and the logs, with every health check green; step 5 (endpoint breakdown) added |
 | Test harness | load generator exhausts inventory within ~15 min through a `held` counter that only grows; `available` in the events list disagrees with reserve |
-| Bonus | runbook 2 validated by a dry run (three predictions corrected); classmate cross-test pending |
+| Bonus | runbook 2 validated by a dry run (three predictions corrected); classmate cross-test not done, bonus not claimed |
 
 What ties the lab together is that each alert was only as good as the traffic and the query underneath it. The error-rate rule paged on zero errors because an absent series is not a zero, fired on a real incident only because one five-minute window held a few more payments than average, and cleared while the incident was still in its window, all for the same reason: the failure was judged against all traffic instead of against the endpoint that failed. The burn-rate rule showed the opposite failure of a single long window, staying quiet during an incident and paging after it was over. The runbook worked, but not in the way it was written. The diagnosis came from the value of one field and one log line, while every health endpoint in the system reported green, and in the Redis dry run one of them reported green about a dead dependency.
