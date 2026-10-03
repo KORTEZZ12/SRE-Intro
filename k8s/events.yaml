@@ -80,10 +80,12 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 10
             failureThreshold: 3
-          # Readiness asks "can it do its job": /health checks the dependencies.
+          # Readiness is shallow on purpose (lab 8 bonus). /health fails when Redis is down,
+          # which pulled the only events pod out of its Service and broke GET /events too,
+          # although listing needs only Postgres. /health stays for dashboards and alerts.
           readinessProbe:
             httpGet:
-              path: /health
+              path: /metrics
               port: 8081
             periodSeconds: 5
             failureThreshold: 2

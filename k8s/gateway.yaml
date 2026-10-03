@@ -43,10 +43,12 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 10
             failureThreshold: 3
-          # Readiness asks "can it do its job": /health checks the dependencies.
+          # Readiness is shallow on purpose (lab 8 bonus). /health returns 503 when events
+          # reports any dependency down, so a Redis outage took all gateway replicas out of
+          # the Service at once. The gateway can still serve reads in that case.
           readinessProbe:
             httpGet:
-              path: /health
+              path: /metrics
               port: 8080
             periodSeconds: 5
             failureThreshold: 2
