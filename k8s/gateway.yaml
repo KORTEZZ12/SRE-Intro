@@ -40,6 +40,10 @@ spec:
       labels:
         app: gateway
     spec:
+      # Kept from Lab 5 for a fresh node that has to pull from private ghcr.io.
+      # The secret is currently missing from the cluster, so kubelet logs a
+      # FailedToRetrieveImagePullSecret warning per pod; IfNotPresent below
+      # means the cached images are used anyway. Recreate it before a new node.
       imagePullSecrets:
         - name: ghcr-secret
       containers:

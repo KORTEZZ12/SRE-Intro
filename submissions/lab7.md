@@ -342,7 +342,7 @@ Applying a changed `strategy` alone did not start a rollout: the phase stayed `H
 
 ### 7.9 Observation
 
-As the lab text notes, the docker-compose Prometheus and Grafana from Lab 3 cannot reach pod IPs inside k3d, so they have no view of a canary. I deployed the in-cluster Prometheus from `labs/lab7/prometheus.yaml` first (the bonus needs it anyway) and used it as the dashboard: every ten seconds the script queried the per-ReplicaSet `/events` request rate and the overall 5xx rate. All five stable pods were discovered with their `rs_hash` label before the run:
+As the lab text notes, the docker-compose Prometheus and Grafana from Lab 3 cannot reach pod IPs inside k3d, so they have no view of a canary. I deployed the in-cluster Prometheus from `labs/lab7/prometheus.yaml` first (the bonus needs it anyway) and used it in place of the Grafana dashboard: the table below shows the same series a Grafana panel on this Prometheus would plot. Every ten seconds the script queried the per-ReplicaSet `/events` request rate and the overall 5xx rate. All five stable pods were discovered with their `rs_hash` label before the run:
 
 ```plaintext
 gateway-6bd89c5bb-fghhs rs= 6bd89c5bb up
@@ -435,19 +435,32 @@ The Prometheus side of the same run (`/events` requests per second over a 30 s w
 ```plaintext
 +t(s)    phase       step updated/ready  events rps by rs_hash (30s rate)                  5xx rps
 10.41    Paused      1    1/5            rs_hash=6bd89c5bb:4.35                            all:0.00
+21.71    Paused      1    1/5            rs_hash=6bd89c5bb:3.97 rs_hash=5d9978bd9b:0.31    all:0.00
+32.95    Paused      1    1/5            rs_hash=6bd89c5bb:3.84 rs_hash=5d9978bd9b:0.62    all:0.00
 44.25    Paused      1    1/5            rs_hash=6bd89c5bb:3.64 rs_hash=5d9978bd9b:0.96    all:0.00
+56.11    Paused      1    1/5            rs_hash=6bd89c5bb:3.28 rs_hash=5d9978bd9b:0.92    all:0.00
 69.12    Progressing 2    2/4            rs_hash=6bd89c5bb:3.48 rs_hash=5d9978bd9b:0.80    all:0.00
+80.95    Paused      3    2/5            rs_hash=6bd89c5bb:3.20 rs_hash=5d9978bd9b:1.04    all:0.00
+92.70    Paused      3    2/5            rs_hash=6bd89c5bb:2.84 rs_hash=5d9978bd9b:1.53    all:0.00
 104.65   Paused      3    2/5            rs_hash=6bd89c5bb:2.52 rs_hash=5d9978bd9b:1.92    all:0.00
+117.11   Paused      3    2/5            rs_hash=6bd89c5bb:2.48 rs_hash=5d9978bd9b:1.88    all:0.00
+128.64   Paused      3    2/5            rs_hash=6bd89c5bb:2.60 rs_hash=5d9978bd9b:1.72    all:0.00
 140.64   Progressing 4    3/4            rs_hash=6bd89c5bb:2.77 rs_hash=5d9978bd9b:1.44    all:0.00
+153.04   Paused      5    3/5            rs_hash=6bd89c5bb:2.41 rs_hash=5d9978bd9b:2.02    all:0.00
+164.54   Paused      5    3/5            rs_hash=6bd89c5bb:1.92 rs_hash=5d9978bd9b:2.30    all:0.00
+176.11   Paused      5    3/5            rs_hash=6bd89c5bb:2.04 rs_hash=5d9978bd9b:2.36    all:0.00
 188.02   Paused      5    3/5            rs_hash=6bd89c5bb:1.84 rs_hash=5d9978bd9b:2.48    all:0.00
+199.40   Paused      5    3/5            rs_hash=6bd89c5bb:1.76 rs_hash=5d9978bd9b:2.76    all:0.00
+210.50   Paused      7    4/5            rs_hash=6bd89c5bb:1.61 rs_hash=5d9978bd9b:2.96    all:0.00
 222.00   Paused      7    4/5            rs_hash=6bd89c5bb:1.34 rs_hash=5d9978bd9b:3.19    all:0.00
+233.10   Paused      7    4/5            rs_hash=6bd89c5bb:1.00 rs_hash=5d9978bd9b:3.18    all:0.00
 245.04   Progressing 8    5/4            rs_hash=6bd89c5bb:0.57 rs_hash=5d9978bd9b:3.84    all:0.00
 256.45   Healthy     9    5/5            rs_hash=6bd89c5bb:0.35 rs_hash=5d9978bd9b:4.23    all:0.00
 ```
 
 Answers to the observation questions:
 
-- **Request rate across steps.** The total stayed between 4.2 and 4.6 `/events` requests per second in every sample (baseline before the rollout: 4.36), with zero 5xx. Only the split moved: in the last sample of each pause the new ReplicaSet's share was 22%, 40%, 61%, 76%, and 92% at `Healthy`. The last value is not 100% because a 30 s `rate()` window still contains the old pods' requests; it reaches 100% half a minute after the last step.
+- **Request rate across steps.** The total stayed between 4.2 and 4.6 `/events` requests per second in every sample (baseline before the rollout: 4.36), with zero 5xx. Only the split moved: in the last sample of each pause (rows 56.11, 128.64, 199.40 and 233.10) the new ReplicaSet's share was 22%, 40%, 61% and 76%, and 92% at `Healthy`. Earlier samples inside a pause read lower, because the 30 s window still holds requests from before the step. The last value is not 100% because a 30 s `rate()` window still contains the old pods' requests; it reaches 100% half a minute after the last step.
 - **Updated replicas.** They climbed 1, 2, 3, 4, 5 exactly with the weights. Between pauses the watch shows intermediate `ActualWeight` values of 25, 50 and 75: a stable pod had already been removed while the new canary pod was still starting, so for a few seconds the ratio was 1 of 4, 2 of 4 and 3 of 4. Ready replicas dipped to 4 at each of those moments.
 - **Where I would abort.** At the first step. Total time was 256 s, and each later step doubles or triples the number of users exposed.
 
@@ -647,7 +660,7 @@ NAME                                 KIND         STATUS         AGE    INFO
 
 The stable pods were untouched; the fifth one is the replacement for the pod the canary had borrowed. Re-applying the good manifest brought the rollout back to `Healthy` in 6.19 s.
 
-> From `kubectl apply` of the bad version to the automatic abort took 107.6 s, and 99 s of that was the analysis waiting for enough data. The bad canary served about 20% of traffic for that whole time. The initial delay trades exposure to real errors for protection against false aborts. With about 4 requests per second, half of them failing, the error was visible in the first scrapes; a shorter `initialDelay` paired with a minimum request count would have cut most of that minute.
+> From `kubectl apply` of the bad version to the automatic abort took 107.6 s. For 99 s of that the canary was live and serving about 20% of traffic: the 20 s pause, the 60 s initial delay and one 20 s interval. The AnalysisRun itself ran 79 s, from 18:40:36 to 18:41:55. The initial delay trades exposure to real errors for protection against false aborts. With about 4 requests per second, half of them failing, the error was visible in the first scrapes; a shorter `initialDelay` paired with a minimum request count would have cut most of that minute.
 
 ### What metric I would add beyond error rate
 
@@ -679,7 +692,7 @@ Two more that this run showed to be needed:
 | Same, with `progressDeadlineAbort` and 60 s deadline | aborted automatically after 62.94 s |
 | Bad canary that passes readiness | values 0.44 and 0.48, Failed, auto-abort 107.6 s after apply |
 
-The thread through all three parts is that a canary is only as good as the signal that decides its fate. In Task 1 that signal was a person reading an in-cluster client, and it took 0.6 s to act on it. In the bonus it was a Prometheus query, and it took 99 s because it waited for statistical confidence. The control experiment showed a third signal the lab did not plan for: the readiness probe from Lab 4, which kept a broken canary away from every user but also kept it away from the analysis. That left the rollout waiting forever until a progress deadline was added. Choosing what the probe checks, what the analysis queries and how long each waits decides how quickly a bad version is caught and how many users see it first.
+The thread through all three parts is that a canary is only as good as the signal that decides its fate. In Task 1 that signal was a person reading an in-cluster client, and it took 0.6 s to act on it. In the bonus it was a Prometheus query, and the bad canary stayed live for 99 s because the pause and the initial delay put off the first measurement. The control experiment showed a third signal the lab did not plan for: the readiness probe from Lab 4, which kept a broken canary away from every user but also kept it away from the analysis. That left the rollout waiting forever until a progress deadline was added. Choosing what the probe checks, what the analysis queries and how long each waits decides how quickly a bad version is caught and how many users see it first.
 
 ### State left behind
 

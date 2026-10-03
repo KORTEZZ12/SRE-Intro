@@ -4,7 +4,7 @@
 # a canary rollout. If the canary's 5xx-error ratio exceeds 5% in 3 consecutive
 # 20s windows, the rollout is aborted automatically.
 #
-# Apply with:  kubectl apply -f labs/lab7/analysis-template.yaml
+# Apply with:  kubectl apply -f k8s/analysis-template.yaml
 #
 # --- Why the query looks this way -------------------------------------------
 #
